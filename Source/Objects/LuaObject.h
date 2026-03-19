@@ -12,6 +12,10 @@ extern "C" {
 #include <pd-lua/pdlua.h>
 #undef PLUGDATA
 
+#ifdef ENABLE_LUAJIT
+#include <pdluajit/pdluajit_gfx.h>
+#endif
+
 void pdlua_gfx_mouse_down(t_pdlua* o, int x, int y);
 void pdlua_gfx_mouse_up(t_pdlua* o, int x, int y);
 void pdlua_gfx_mouse_move(t_pdlua* o, int x, int y);
@@ -645,6 +649,555 @@ public:
     }
 };
 
+#ifdef ENABLE_LUAJIT
+
+/* ========================================================================= */
+/* LuaJitGfx — NanoVG vtable wrappers for pdluajit graphics                 */
+/* ========================================================================= */
+
+namespace LuaJitGfx {
+
+static void vt_save(void* ctx)
+{
+    nvgSave(static_cast<NVGcontext*>(ctx));
+}
+
+static void vt_restore(void* ctx)
+{
+    nvgRestore(static_cast<NVGcontext*>(ctx));
+}
+
+static void vt_reset_transform(void* ctx)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    nvgRestore(nvg);
+    nvgSave(nvg);
+}
+
+static void vt_set_color(void* ctx, int r, int g, int b, int a)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    NVGcolor c = nvgRGBA(static_cast<unsigned char>(r), static_cast<unsigned char>(g),
+                          static_cast<unsigned char>(b), static_cast<unsigned char>(a));
+    nvgFillColor(nvg, c);
+    nvgStrokeColor(nvg, c);
+}
+
+static void vt_stroke_width(void* ctx, float width)
+{
+    nvgStrokeWidth(static_cast<NVGcontext*>(ctx), width);
+}
+
+static void vt_fill_rect(void* ctx, float x, float y, float w, float h)
+{
+    nvgFillRect(static_cast<NVGcontext*>(ctx), x, y, w, h);
+}
+
+static void vt_fill_rounded_rect(void* ctx, float x, float y, float w, float h, float radius)
+{
+    nvgFillRoundedRect(static_cast<NVGcontext*>(ctx), x, y, w, h, radius);
+}
+
+static void vt_fill_ellipse(void* ctx, float x, float y, float w, float h)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    nvgBeginPath(nvg);
+    nvgEllipse(nvg, x + w * 0.5f, y + h * 0.5f, w * 0.5f, h * 0.5f);
+    nvgFill(nvg);
+}
+
+static void vt_stroke_rect(void* ctx, float x, float y, float w, float h)
+{
+    nvgStrokeRect(static_cast<NVGcontext*>(ctx), x, y, w, h);
+}
+
+static void vt_stroke_rounded_rect(void* ctx, float x, float y, float w, float h, float radius)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    nvgBeginPath(nvg);
+    nvgRoundedRect(nvg, x, y, w, h, radius);
+    nvgStroke(nvg);
+}
+
+static void vt_stroke_ellipse(void* ctx, float x, float y, float w, float h)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    nvgBeginPath(nvg);
+    nvgEllipse(nvg, x + w * 0.5f, y + h * 0.5f, w * 0.5f, h * 0.5f);
+    nvgStroke(nvg);
+}
+
+static void vt_draw_line(void* ctx, float x1, float y1, float x2, float y2)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    nvgBeginPath(nvg);
+    nvgMoveTo(nvg, x1, y1);
+    nvgLineTo(nvg, x2, y2);
+    nvgStroke(nvg);
+}
+
+static void vt_begin_path(void* ctx)
+{
+    nvgBeginPath(static_cast<NVGcontext*>(ctx));
+}
+
+static void vt_move_to(void* ctx, float x, float y)
+{
+    nvgMoveTo(static_cast<NVGcontext*>(ctx), x, y);
+}
+
+static void vt_line_to(void* ctx, float x, float y)
+{
+    nvgLineTo(static_cast<NVGcontext*>(ctx), x, y);
+}
+
+static void vt_quad_to(void* ctx, float cx, float cy, float x, float y)
+{
+    nvgQuadTo(static_cast<NVGcontext*>(ctx), cx, cy, x, y);
+}
+
+static void vt_bezier_to(void* ctx, float c1x, float c1y, float c2x, float c2y, float x, float y)
+{
+    nvgBezierTo(static_cast<NVGcontext*>(ctx), c1x, c1y, c2x, c2y, x, y);
+}
+
+static void vt_close_path(void* ctx)
+{
+    nvgClosePath(static_cast<NVGcontext*>(ctx));
+}
+
+static void vt_fill(void* ctx)
+{
+    nvgFill(static_cast<NVGcontext*>(ctx));
+}
+
+static void vt_stroke(void* ctx)
+{
+    nvgStroke(static_cast<NVGcontext*>(ctx));
+}
+
+static void vt_translate(void* ctx, float tx, float ty)
+{
+    nvgTranslate(static_cast<NVGcontext*>(ctx), tx, ty);
+}
+
+static void vt_scale(void* ctx, float sx, float sy)
+{
+    nvgScale(static_cast<NVGcontext*>(ctx), sx, sy);
+}
+
+static void vt_fill_all(void* ctx, float w, float h,
+                         unsigned int fill_rgba, unsigned int outline_rgba,
+                         float corner_radius)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    NVGcolor fillCol;
+    fillCol.rgba32 = fill_rgba;
+    NVGcolor outlineCol;
+    outlineCol.rgba32 = outline_rgba;
+    nvgDrawRoundedRect(nvg, 0, 0, w, h, fillCol, outlineCol, corner_radius);
+}
+
+static void vt_draw_text(void* ctx, char const* text, float x, float y,
+                          float max_width, float font_height)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    nvgFontSize(nvg, font_height);
+    nvgTextAlign(nvg, NVG_ALIGN_TOP | NVG_ALIGN_LEFT);
+    nvgBeginPath(nvg);
+    nvgTextBox(nvg, x, y, max_width, text, nullptr);
+}
+
+static int vt_create_image(void* ctx, const char* filename, int imageFlags)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    auto file = File(String::fromUTF8(filename));
+    if (!file.existsAsFile())
+        return 0;
+
+    auto img = ImageFileFormat::loadFrom(file);
+    if (!img.isValid())
+        return 0;
+
+    img = img.convertedToFormat(Image::ARGB);
+    Image::BitmapData bmp(img, Image::BitmapData::readOnly);
+
+    return nvgCreateImageARGB_sRGB(nvg, img.getWidth(), img.getHeight(),
+                                    imageFlags, bmp.data);
+}
+
+static void vt_delete_image(void* ctx, int image)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    nvgDeleteImage(nvg, image);
+}
+
+static void vt_draw_image(void* ctx, int image, float x, float y, float w, float h, float alpha)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    NVGpaint imgPaint = nvgImagePattern(nvg, x, y, w, h, 0, image, alpha);
+    nvgBeginPath(nvg);
+    nvgRect(nvg, x, y, w, h);
+    nvgFillPaint(nvg, imgPaint);
+    nvgFill(nvg);
+}
+
+static void vt_set_fill_paint_image_pattern(void* ctx, float ox, float oy, float ex, float ey, float angle, int image, float alpha)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    NVGpaint imgPaint = nvgImagePattern(nvg, ox, oy, ex, ey, angle, image, alpha);
+    nvgFillPaint(nvg, imgPaint);
+}
+
+static int vt_create_image_rgba(void* ctx, int w, int h, int imageFlags, const unsigned char* data)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    return nvgCreateImageARGB(nvg, w, h, imageFlags, data);
+}
+
+static void vt_update_image(void* ctx, int image, const unsigned char* data)
+{
+    auto* nvg = static_cast<NVGcontext*>(ctx);
+    nvgUpdateImage(nvg, image, data);
+}
+
+static inline const pdluajit_gfx_vtable vtable = {
+    vt_save,
+    vt_restore,
+    vt_reset_transform,
+    vt_set_color,
+    vt_stroke_width,
+    vt_fill_rect,
+    vt_fill_rounded_rect,
+    vt_fill_ellipse,
+    vt_stroke_rect,
+    vt_stroke_rounded_rect,
+    vt_stroke_ellipse,
+    vt_draw_line,
+    vt_begin_path,
+    vt_move_to,
+    vt_line_to,
+    vt_quad_to,
+    vt_bezier_to,
+    vt_close_path,
+    vt_fill,
+    vt_stroke,
+    vt_translate,
+    vt_scale,
+    vt_fill_all,
+    vt_draw_text,
+    vt_create_image,
+    vt_delete_image,
+    vt_draw_image,
+    vt_set_fill_paint_image_pattern,
+    vt_create_image_rgba,
+    vt_update_image
+};
+
+} // namespace LuaJitGfx
+
+/* ========================================================================= */
+/* LuaJitObject — GUI object class for pdluajit scripts with paint()         */
+/* ========================================================================= */
+
+class LuaJitObject final : public ObjectBase
+    , private Value::Listener {
+
+    bool isSelected = false;
+    Value zoomScale;
+    std::unique_ptr<Component> textEditor;
+    std::unique_ptr<Dialog> saveDialog;
+
+    NVGFramebuffer framebuffer;
+    bool fbDirty = true;
+
+public:
+    LuaJitObject(pd::WeakReference obj, Object* parent)
+        : ObjectBase(obj, parent)
+    {
+        object->editor->nvgSurface.addBufferedObject(this);
+        parentHierarchyChanged();
+    }
+
+    ~LuaJitObject() override
+    {
+        zoomScale.removeListener(this);
+        object->editor->nvgSurface.removeBufferedObject(this);
+    }
+
+    void parentHierarchyChanged() override
+    {
+        auto const* topLevelCanvas = cnv;
+        while (auto const* nextCanvas = topLevelCanvas->findParentComponentOfClass<Canvas>()) {
+            topLevelCanvas = nextCanvas;
+        }
+        zoomScale.referTo(topLevelCanvas->zoomScale);
+        zoomScale.addListener(this);
+        fbDirty = true;
+    }
+
+    Rectangle<int> getPdBounds() override
+    {
+        if (auto gobj = ptr.get<t_gobj>()) {
+            auto* patch = cnv->patch.getRawPointer();
+            int x = 0, y = 0, w = 0, h = 0;
+            pd::Interface::getObjectBounds(patch, gobj.get(), &x, &y, &w, &h);
+            return Rectangle<int>(x, y,
+                pdluajit_get_width(gobj.get()) + 2,
+                pdluajit_get_height(gobj.get()) + 2);
+        }
+        return {};
+    }
+
+    void setPdBounds(Rectangle<int> const b) override
+    {
+        if (auto gobj = ptr.get<t_gobj>()) {
+            auto* patch = object->cnv->patch.getRawPointer();
+            pd::Interface::moveObject(patch, gobj.get(), b.getX(), b.getY());
+            pdluajit_set_size(gobj.get(), b.getWidth() - 2, b.getHeight() - 2);
+        }
+        fbDirty = true;
+    }
+
+    void updateSizeProperty() override { }
+
+    bool hideInGraph() override { return false; }
+
+    void getMenuOptions(PopupMenu& menu) override
+    {
+        menu.addItem("Open lua editor", [_this = SafePointer(this)] {
+            if (!_this)
+                return;
+            if (auto obj = _this->ptr.get<t_pd>()) {
+                _this->pd->sendDirectMessage(obj.get(), "menu-open", {});
+            }
+        });
+        menu.addItem("Reload lua object", [_this = SafePointer(this)] {
+            if (!_this)
+                return;
+            _this->cnv->editor->sidebar->hideParameters();
+            if (auto pdobj = _this->ptr.get<t_pd>()) {
+                pd_typedmess(pdobj.get(), gensym("reload"), 0, nullptr);
+                if (auto patch = _this->cnv->patch.getPointer()) {
+                    pd::Interface::recreateTextObject(patch.get(), pdobj.cast<t_gobj>());
+                }
+                _this->cnv->synchronise();
+            }
+        });
+    }
+
+    void mouseDown(MouseEvent const& e) override
+    {
+        pd->enqueueFunctionAsync<t_pd>(ptr, [x = e.x, y = e.y](t_pd* obj) {
+            sys_lock();
+            pdluajit_mouse_down(obj, x, y);
+            sys_unlock();
+        });
+    }
+
+    void mouseUp(MouseEvent const& e) override
+    {
+        pd->enqueueFunctionAsync<t_pd>(ptr, [x = e.x, y = e.y](t_pd* obj) {
+            sys_lock();
+            pdluajit_mouse_up(obj, x, y);
+            sys_unlock();
+        });
+    }
+
+    void mouseMove(MouseEvent const& e) override
+    {
+        pd->enqueueFunctionAsync<t_pd>(ptr, [x = e.x, y = e.y](t_pd* obj) {
+            sys_lock();
+            pdluajit_mouse_move(obj, x, y);
+            sys_unlock();
+        });
+    }
+
+    void mouseDrag(MouseEvent const& e) override
+    {
+        pd->enqueueFunctionAsync<t_pd>(ptr, [x = e.x, y = e.y](t_pd* obj) {
+            sys_lock();
+            pdluajit_mouse_drag(obj, x, y);
+            sys_unlock();
+        });
+    }
+
+    void render(NVGcontext* nvg) override
+    {
+        NVGScopedState scopedState(nvg);
+
+        auto scale = nvgCurrentPixelScale(nvg) * getValue<float>(zoomScale);
+        nvgScale(nvg, 1.0f / scale, 1.0f / scale);
+        nvgTransformQuantize(nvg);
+
+        framebuffer.render(nvg, Rectangle<int>(
+            static_cast<int>(std::ceil(getWidth() * scale)),
+            static_cast<int>(std::ceil(getHeight() * scale))));
+    }
+
+    void valueChanged(Value& v) override
+    {
+        fbDirty = true;
+    }
+
+    void resized() override
+    {
+        fbDirty = true;
+
+        pd->enqueueFunctionAsync<t_pd>(ptr, [w = getWidth() - 2, h = getHeight() - 2](t_pd* obj) {
+            t_atom args[2];
+            SETFLOAT(&args[0], w);
+            SETFLOAT(&args[1], h);
+            sys_lock();
+            pd_typedmess(obj, gensym("lua_resized"), 2, args);
+            sys_unlock();
+        });
+    }
+
+    void lookAndFeelChanged() override
+    {
+        fbDirty = true;
+    }
+
+    void updateFramebuffers(NVGcontext* nvg) override
+    {
+        bool const selChanged = (isSelected != object->isSelected());
+        if (selChanged) {
+            isSelected = object->isSelected();
+            fbDirty = true;
+        }
+
+        if (!fbDirty && framebuffer.isValid())
+            return;
+
+        fbDirty = false;
+
+        if (getLocalBounds().isEmpty())
+            return;
+
+        auto const pixelScale = nvgCurrentPixelScale(nvg);
+        auto const zoom = getValue<float>(zoomScale);
+        auto const imageScale = zoom * pixelScale;
+        int const imageWidth = static_cast<int>(std::ceil(getWidth() * imageScale));
+        int const imageHeight = static_cast<int>(std::ceil(getHeight() * imageScale));
+        if (!imageWidth || !imageHeight)
+            return;
+
+        auto const outlineNvg = isSelected ? cnv->selectedOutlineCol : cnv->objectOutlineCol;
+        unsigned int outline_rgba = outlineNvg.rgba32;
+
+        framebuffer.bind(nvg, imageWidth, imageHeight);
+
+        nvgViewport(0, 0, imageWidth, imageHeight);
+        nvgClear(nvg);
+        nvgBeginFrame(nvg, getWidth() * zoom, getHeight() * zoom, pixelScale);
+        nvgScale(nvg, zoom, zoom);
+        nvgSave(nvg);
+
+        pd->setThis();
+        sys_lock();
+        pdluajit_paint(ptr.getRawUnchecked<void>(), nvg, &LuaJitGfx::vtable,
+                        getWidth(), getHeight(), outline_rgba);
+        sys_unlock();
+
+        nvgGlobalScissor(nvg, 0, 0, getWidth() * imageScale, getHeight() * imageScale);
+        nvgEndFrame(nvg);
+        NVGFramebuffer::unbind();
+        repaint();
+    }
+
+    void receiveObjectMessage(hash32 const symbol, SmallArray<pd::Atom> const& atoms) override
+    {
+        switch (symbol) {
+        case hash("lua_repaint"): {
+            fbDirty = true;
+            repaint();
+            break;
+        }
+        case hash("lua_resized"): {
+            if (atoms.size() >= 2) {
+                MessageManager::callAsync([_object = SafePointer(object)] {
+                    if (_object)
+                        _object->updateBounds();
+                });
+            }
+            break;
+        }
+        case hash("open_textfile"): {
+            if (atoms.size() >= 1)
+                openTextEditor(File(atoms[0].toString()));
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    void openTextEditor(File fileToOpen)
+    {
+        if (textEditor) {
+            textEditor->toFront(true);
+            return;
+        }
+
+        if (cnv->editor->openTextEditors.contains(ptr))
+            return;
+
+        auto onClose = [_this = SafePointer(this), this, fileToOpen](String const& newText, bool const hasChanged) {
+            if (!_this)
+                return;
+
+            if (!hasChanged) {
+                cnv->editor->openTextEditors.remove_all(ptr);
+                textEditor.reset(nullptr);
+                return;
+            }
+
+            Dialogs::showAskToSaveDialog(
+                &saveDialog, textEditor.get(), "", [_this = SafePointer(this), newText, fileToOpen](int const result) mutable {
+                    if (!_this)
+                        return;
+                    if (result == 2) {
+                        fileToOpen.replaceWithText(newText);
+                        if (auto pdobj = _this->ptr.get<t_pd>()) {
+                            pd_typedmess(pdobj.get(), gensym("reload"), 0, nullptr);
+                            if (auto patch = _this->cnv->patch.getPointer()) {
+                                pd::Interface::recreateTextObject(patch.get(), pdobj.cast<t_gobj>());
+                            }
+                        }
+                        _this->cnv->editor->openTextEditors.remove_all(_this->ptr);
+                        _this->textEditor.reset(nullptr);
+                        _this->cnv->synchronise();
+                    }
+                    if (result == 1) {
+                        _this->cnv->editor->openTextEditors.remove_all(_this->ptr);
+                        _this->textEditor.reset(nullptr);
+                    }
+                },
+                15, false);
+        };
+
+        auto onSave = [_this = SafePointer(this), this, fileToOpen](String const& newText) {
+            if (!_this)
+                return;
+            fileToOpen.replaceWithText(newText);
+            if (auto pdobj = ptr.get<t_pd>()) {
+                pd_typedmess(pdobj.get(), gensym("reload"), 0, nullptr);
+            }
+            fbDirty = true;
+            repaint();
+        };
+
+        auto const scaleFactor = getApproximateScaleFactorForComponent(cnv->editor);
+        textEditor.reset(Dialogs::showTextEditorDialog(fileToOpen.loadFileAsString(), "luajit: " + getText(), onClose, onSave, scaleFactor, true));
+
+        if (textEditor)
+            cnv->editor->openTextEditors.add_unique(ptr);
+    }
+};
+
+#endif // ENABLE_LUAJIT
+
 // A non-GUI Lua object, that we would still like to have clickable for opening the editor
 class LuaTextObject final : public TextObjectBase {
 public:
@@ -667,7 +1220,7 @@ public:
 
         if (getValue<bool>(object->locked)) {
             auto objectText = getText();
-            if (objectText != "pdlua" && objectText != "pdluax") {
+            if (objectText != "pdlua" && objectText != "pdluax" && objectText != "pdluajit") {
                 sendMessage("menu-open");
             }
         }
@@ -683,7 +1236,7 @@ public:
     void getMenuOptions(PopupMenu& menu) override
     {
         auto objectText = getText();
-        if (objectText != "pdlua" && objectText != "pdluax") {
+        if (objectText != "pdlua" && objectText != "pdluax" && objectText != "pdluajit") {
             menu.addItem("Open lua editor", [_this = SafePointer(this)] {
                 if (!_this)
                     return;
@@ -694,8 +1247,13 @@ public:
                 if (!_this)
                     return;
                 if (auto pdlua = _this->ptr.get<t_pd>()) {
-                    // Reload the lua script
-                    pd_typedmess(_this->pdluaxSymbol->s_thing, gensym("reload"), 0, nullptr);
+                    auto objectText = _this->getText();
+                    if (objectText.startsWith("pdluajit")) {
+                        pd_typedmess(pdlua.get(), gensym("reload"), 0, nullptr);
+                    } else {
+                        // Reload the lua script
+                        pd_typedmess(_this->pdluaxSymbol->s_thing, gensym("reload"), 0, nullptr);
+                    }
 
                     // Recreate this object
                     if (auto patch = _this->cnv->patch.getPointer()) {
@@ -734,7 +1292,14 @@ public:
                     if (result == 2) {
                         fileToOpen.replaceWithText(newText);
                         if (auto pdlua = ptr.get<t_pd>()) {
-                            pd_typedmess(pdluaxSymbol->s_thing, gensym("reload"), 0, nullptr);
+                            sys_lock();
+                            auto objectText = getText();
+                            if (objectText.startsWith("pdluajit")) {
+                                pd_typedmess(pdlua.get(), gensym("reload"), 0, nullptr);
+                            } else {
+                                pd_typedmess(pdluaxSymbol->s_thing, gensym("reload"), 0, nullptr);
+                            }
+                            sys_unlock();
                             // Recreate this object
                             if (auto patch = cnv->patch.getPointer()) {
                                 pd::Interface::recreateTextObject(patch.get(), pdlua.cast<t_gobj>());
@@ -757,9 +1322,14 @@ public:
                 return;
             fileToOpen.replaceWithText(newText);
             if (auto pdlua = ptr.get<t_pd>()) {
-                if (pdluaxSymbol->s_thing) {
+                sys_lock();
+                auto objectText = getText();
+                if (objectText.startsWith("pdluajit")) {
+                    pd_typedmess(pdlua.get(), gensym("reload"), 0, nullptr);
+                } else if(pdluaxSymbol->s_thing) {
                     pd_typedmess(pdluaxSymbol->s_thing, gensym("reload"), 0, nullptr);
                 }
+                sys_unlock();
             }
         };
 
