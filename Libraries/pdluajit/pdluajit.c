@@ -31,23 +31,6 @@
 static t_class *pdluajit_class;
 static t_class *pdluajit_proxyinlet_class;
 
-/* In PDINSTANCE builds (VST3, multi-instance), gensym() is per-instance.
- * class_new() names must use the global pd_maininstance's symbol table,
- * otherwise the message dispatcher cannot find the class -> crash.
- * Standalone (single instance) is unaffected. */
-static t_symbol *pdluajit_global_gensym(const char *s)
-{
-#ifdef PDINSTANCE
-    t_pdinstance *prev = pd_get_instance();
-    pd_set_instance(&pd_maininstance);
-#endif
-    t_symbol *sym = gensym(s);
-#ifdef PDINSTANCE
-    pd_set_instance(prev);
-#endif
-    return sym;
-}
-
 /* ========================================================================= */
 /* Bootstrap Lua code                                                        */
 /* ========================================================================= */
@@ -351,7 +334,7 @@ static void pdluajit_proxyinlet_init(t_pdluajit_proxyinlet *p,
 static void pdluajit_proxyinlet_setup(void)
 {
     pdluajit_proxyinlet_class = class_new(
-        pdluajit_global_gensym("pdluajit proxy inlet"),
+        gensym("pdluajit proxy inlet"),
         0, 0,
         sizeof(t_pdluajit_proxyinlet),
         CLASS_PD, 0);
@@ -360,7 +343,7 @@ static void pdluajit_proxyinlet_setup(void)
                           (t_method)pdluajit_proxyinlet_anything);
         class_addmethod(pdluajit_proxyinlet_class,
                         (t_method)pdluajit_proxyinlet_fwd,
-                        pdluajit_global_gensym("fwd"), A_GIMME, 0);
+                        gensym("fwd"), A_GIMME, 0);
     }
 }
 
@@ -1338,7 +1321,7 @@ void pdluajit_setup(void)
     /* Register proxy inlet class first */
     pdluajit_proxyinlet_setup();
 
-    pdluajit_class = class_new(pdluajit_global_gensym("pdluajit"),
+    pdluajit_class = class_new(gensym("pdluajit"),
         (t_newmethod)pdluajit_new,
         (t_method)pdluajit_free,
         sizeof(t_pdluajit),
@@ -1346,15 +1329,15 @@ void pdluajit_setup(void)
         A_GIMME, 0);
 
     class_addmethod(pdluajit_class, (t_method)pdluajit_dsp,
-                    pdluajit_global_gensym("dsp"), A_CANT, 0);
+                    gensym("dsp"), A_CANT, 0);
     class_addmethod(pdluajit_class, (t_method)pdluajit_load,
-                    pdluajit_global_gensym("load"), A_SYMBOL, 0);
+                    gensym("load"), A_SYMBOL, 0);
     class_addmethod(pdluajit_class, (t_method)pdluajit_reload,
-                    pdluajit_global_gensym("reload"), A_NULL, 0);
+                    gensym("reload"), A_NULL, 0);
     class_addmethod(pdluajit_class, (t_method)pdluajit_lua_resized_wrapper,
-                    pdluajit_global_gensym("lua_resized"), A_GIMME, 0);
+                    gensym("lua_resized"), A_GIMME, 0);
     class_addmethod(pdluajit_class, (t_method)pdluajit_menu_open,
-                    pdluajit_global_gensym("menu-open"), A_NULL, 0);
+                    gensym("menu-open"), A_NULL, 0);
 
     post("pdluajit: LuaJIT DSP external for plugdata");
 }
