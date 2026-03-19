@@ -722,6 +722,19 @@ ObjectBase* ObjectBase::createGui(pd::WeakReference ptr, Object* parent)
         case hash("pdlua"): {
             return new LuaTextObject(ptr, parent);
         }
+#ifdef ENABLE_LUAJIT
+        case hash("pdluajit"): {
+            if (auto checked = ptr.get<t_gobj>()) {
+                if (pdluajit_has_gui(checked.get()))
+                    return new LuaJitObject(ptr, parent);
+            }
+            return new LuaTextObject(ptr, parent);
+        }
+#else
+        case hash("pdluajit"): {
+            return new LuaTextObject(ptr, parent);
+        }
+#endif
         default:
             break;
         }

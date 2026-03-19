@@ -1320,6 +1320,10 @@ void pdlink_tilde_setup();
 void pdlua_setup(char const* datadir, char* vers, int vers_len, void (*register_class_callback)(char const*));
 void pdlua_instance_setup();
 
+#ifdef ENABLE_LUAJIT
+void pdluajit_setup(void);
+#endif
+
 void fftw_instance_setup();
 }
 
@@ -1403,6 +1407,9 @@ void Setup::initialisePdLua(char const* datadir, char* vers, int const vers_len,
 {
     set_plugdata_object_probe_enabled(1);
     pdlua_setup(datadir, vers, vers_len, register_class_callback);
+#ifdef ENABLE_LUAJIT
+    pdluajit_setup();
+#endif
     set_plugdata_object_probe_enabled(0);
 }
 
