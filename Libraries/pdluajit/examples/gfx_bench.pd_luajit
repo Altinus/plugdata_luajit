@@ -1,0 +1,72 @@
+-- gfx_bench.pd_luajit — Graphics performance benchmark
+--
+-- Measures draw call overhead by rendering N shapes per paint cycle.
+-- Send [bang] to trigger one benchmark cycle.
+-- Send [float N] to set shape count (default 1000).
+
+inlets = {DATA}
+outlets = {DATA}
+
+local ffi = require('ffi')
+local clock = ffi.C and os.clock  -- LuaJIT os.clock = high-res
+
+local num_shapes = 1000
+local last_time_us = 0
+local frame_count = 0
+
+function initialize()
+    pd.set_size(300, 200)
+end
+
+function paint(g)
+    g:set_color(30, 30, 40)
+    g:fill_all()
+
+    -- Draw num_shapes filled rectangles
+    local n = num_shapes
+    local w, h = 4, 4
+    local cols = 30
+    for i = 0, n - 1 do
+        local r = (i * 7) % 256
+        local gr = (i * 13) % 256
+        local b = (i * 19) % 256
+        g:set_color(r, gr, b, 180)
+
+        local col = i % cols
+        local row = math.floor(i / cols)
+        local x = 2 + col * 10
+        local y = 2 + row * 6
+        g:fill_rect(x, y, w, h)
+    end
+
+    -- Stats overlay
+    g:set_color(255, 255, 255)
+    g:draw_text(string.format("%d shapes  %.1f us", n, last_time_us), 5, 180, 290, 12)
+end
+
+function in_1_bang()
+    -- Benchmark: measure paint time
+    frame_count = frame_count + 1
+    local t0 = os.clock()
+
+    -- Force a synchronous repaint measurement
+    -- The actual measurement happens in the paint wrapper below
+    pd.repaint()
+end
+
+function in_1_float(n)
+    num_shapes = math.max(1, math.floor(n))
+    pd.post(string.format("gfx_bench: set num_shapes = %d", num_shapes))
+    pd.repaint()
+end
+
+-- Override paint to add timing
+local _real_paint = paint
+function paint(g)
+    local t0 = os.clock()
+    _real_paint(g)
+    local t1 = os.clock()
+    last_time_us = (t1 - t0) * 1e6
+    -- Output timing to outlet
+    -- Note: can't call pd.outlet from render thread, store for next message
+end

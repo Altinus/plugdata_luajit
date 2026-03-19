@@ -1,0 +1,31 @@
+-- stereo.pd_luajit — Stereo mid/side encoder
+--
+-- Usage: [pdluajit stereo]
+-- Input: L/R stereo pair
+-- Output: Mid/Side encoded pair
+-- Send "mode ms" for mid/side, "mode lr" for passthrough
+
+inlets  = {SIGNAL, SIGNAL}
+outlets = {SIGNAL, SIGNAL}
+
+local mode = "ms"
+
+function perform(ins, outs, n)
+    if mode == "ms" then
+        for i = 0, n - 1 do
+            local L = ins[1][i]
+            local R = ins[2][i]
+            outs[1][i] = (L + R) * 0.5  -- mid
+            outs[2][i] = (L - R) * 0.5  -- side
+        end
+    else
+        for i = 0, n - 1 do
+            outs[1][i] = ins[1][i]
+            outs[2][i] = ins[2][i]
+        end
+    end
+end
+
+function in_1(sel, atoms)
+    if sel == "mode" and #atoms >= 1 then mode = atoms[1] end
+end

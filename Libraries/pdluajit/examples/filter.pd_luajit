@@ -1,0 +1,34 @@
+-- filter.pd_luajit — One-pole lowpass filter with single-sample feedback
+--
+-- Usage: [pdluajit filter]
+-- Send "freq 1000" message to set cutoff frequency
+
+inlets  = {SIGNAL}
+outlets = {SIGNAL}
+
+local freq = 1000
+local coeff = 0
+local y1 = 0
+
+function dsp(sr, bs)
+    coeff = math.exp(-2 * math.pi * freq / sr)
+end
+
+function perform(ins, outs, n)
+    local c = coeff
+    local y = y1
+    for i = 0, n - 1 do
+        y = ins[1][i] + (y - ins[1][i]) * c
+        outs[1][i] = y
+    end
+    y1 = y
+end
+
+function in_1(sel, atoms)
+    if sel == "freq" and #atoms >= 1 then
+        freq = atoms[1]
+        if pd.samplerate then
+            coeff = math.exp(-2 * math.pi * freq / pd.samplerate)
+        end
+    end
+end

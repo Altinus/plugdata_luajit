@@ -1,0 +1,23 @@
+-- gain.pd_luajit — Simple gain control
+--
+-- Usage: [pdluajit gain]
+-- Send float to inlet 2 to control gain level
+
+inlets  = {SIGNAL}
+outlets = {SIGNAL}
+
+local gain = 1.0
+
+function dsp(sr, bs)
+    -- called when DSP starts or parameters change
+end
+
+function perform(ins, outs, n)
+    for i = 0, n - 1 do
+        outs[1][i] = ins[1][i] * gain
+    end
+end
+
+function in_1(sel, atoms)
+    if sel == "gain" and #atoms >= 1 then gain = atoms[1] end
+end

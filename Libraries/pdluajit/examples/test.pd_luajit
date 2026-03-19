@@ -1,0 +1,81 @@
+inlets  = {DATA}
+outlets = {}
+
+local ffi = require('ffi')
+local bit = require('bit')
+local math = math
+local initval = 0
+
+-- Lower internal resolution for high performance; rendering scales up smoothly
+local TEX_W = 120
+local TEX_H = 120
+local total_pixels = TEX_W * TEX_H
+
+local pixels = ffi.new('uint32_t[?]', total_pixels)
+local tex_handle = create_image_rgba(TEX_W, TEX_H, pixels)
+--local tex_handle = nil
+
+local time = 0
+
+
+-- Fast pixel packing
+local function pack_pixel(r, g, b)
+    return bit.bor(0xFF000000, bit.lshift(r, 16), bit.lshift(g, 8), b)
+end
+
+function initialize()
+    pd.set_size(240, 240)
+    pd.post("localval")
+    local tex_handle = nil
+    --localval = localval+1
+end
+
+function tick()
+    time = time + 0.05
+    local sin, cos = math.sin, math.cos
+    
+    local idx = 0
+    for y = 0, TEX_H - 1 do
+        for x = 0, TEX_W - 1 do
+            -- Normalize coordinates with time offset
+            local u = (x / TEX_W) * 4.0
+            local v = (y / TEX_H) * 4.0
+            
+            -- Multi-sine superposition simulating organic noise (simplified fBm)
+            local noise = sin(u + time) + cos(v + time * 0.8) 
+                        + sin(u * 2.0 - v * 1.5 + time * 1.2) * 0.5
+            
+            -- Map ~[-2.5, 2.5] range to [0, 255]
+            local intensity = (noise + 2.5) * 50
+            if intensity > 255 then intensity = 255 end
+            if intensity < 0 then intensity = 0 end
+            
+            -- Modern minimalist palette: deep blue-grey tones
+            local r = intensity * 0.3
+            local g = intensity * 0.6
+            local b = intensity * 0.9 + 50
+            if b > 255 then b = 255 end
+            
+            pixels[idx] = pack_pixel(r, g, b)
+            idx = idx + 1
+        end
+    end
+    
+    pd.repaint()
+end
+
+pd.clock_set(16)
+
+function invalidate()
+   tex_handle = nil
+end
+
+function paint(g)
+    --if not tex_handle then
+        --tex_handle = g:create_image_rgba(TEX_W, TEX_H, pixels)
+    --else
+        g:update_image(tex_handle, pixels)
+    --end
+    
+    g:draw_image(tex_handle, 0, 0, g:width(), g:height())
+end
