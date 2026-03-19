@@ -297,6 +297,43 @@ source_group(pdlua FILES ${PDLUA_SOURCES})
 #execute_process(COMMAND git -C ${CMAKE_CURRENT_SOURCE_DIR}/pd-lua describe --tags OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE PDLUA_VERSION)
 #set_source_files_properties(${PDLUA_PATH}/pdlua.c PROPERTIES COMPILE_DEFINITIONS PDLUA_VERSION=${PDLUA_VERSION})
 
+# pdluajit sources (LuaJIT DSP external)
+option(ENABLE_LUAJIT "Enable pdluajit LuaJIT DSP external" OFF)
+set(PDLUAJIT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/pdluajit")
+if(ENABLE_LUAJIT)
+    set(PDLUAJIT_SOURCES ${PDLUAJIT_PATH}/pdluajit.c)
+    source_group(pdluajit FILES ${PDLUAJIT_SOURCES})
+
+    # Auto-build LuaJIT from submodule
+    set(LUAJIT_SRC_DIR "${PDLUAJIT_PATH}/luajit-src/src")
+    set(LUAJIT_INCLUDE_DIR "${LUAJIT_SRC_DIR}")
+
+    # Copy luajit_rename.h into LuaJIT source tree for build-time symbol renaming
+    file(COPY "${PDLUAJIT_PATH}/luajit_rename.h" DESTINATION "${LUAJIT_SRC_DIR}")
+
+    if(MSVC)
+        set(LUAJIT_LIBRARY "${LUAJIT_SRC_DIR}/lua51.lib")
+
+        # /FI forces inclusion of luajit_rename.h in every translation unit,
+        # renaming lua_* symbols to luajit_* to avoid conflicts with Lua 5.4.
+        add_custom_command(
+            OUTPUT "${LUAJIT_LIBRARY}"
+            COMMAND ${CMAKE_COMMAND} -E env "CL=/FI\"${LUAJIT_SRC_DIR}/luajit_rename.h\"" cmd /c msvcbuild.bat static
+            WORKING_DIRECTORY "${LUAJIT_SRC_DIR}"
+            COMMENT "Building LuaJIT (MSVC static)..."
+        )
+    else()
+        set(LUAJIT_LIBRARY "${LUAJIT_SRC_DIR}/libluajit.a")
+        add_custom_command(
+            OUTPUT "${LUAJIT_LIBRARY}"
+            COMMAND make -j "XCFLAGS=-include luajit_rename.h"
+            WORKING_DIRECTORY "${LUAJIT_SRC_DIR}"
+            COMMENT "Building LuaJIT..."
+        )
+    endif()
+    add_custom_target(luajit_build DEPENDS "${LUAJIT_LIBRARY}")
+endif()
+
 # ------------------------------------------------------------------------------#
 # COMPILE DEFINITIONS
 # ------------------------------------------------------------------------------#
@@ -453,6 +490,38 @@ unset(MESSAGE_QUIET)
 add_library(externals STATIC ${ELSE_SOURCES} ${CYCLONE_SOURCES} ${PDLUA_SOURCES})
 add_library(externals-multi STATIC ${ELSE_SOURCES} ${CYCLONE_SOURCES} ${PDLUA_SOURCES} ${})
 
+# pdluajit: separate target to isolate LuaJIT headers from Lua 5.4
+if(ENABLE_LUAJIT)
+    add_library(pdluajit-lib STATIC ${PDLUAJIT_SOURCES})
+    add_library(pdluajit-lib-multi STATIC ${PDLUAJIT_SOURCES})
+
+    # CRITICAL: pdluajit ONLY sees LuaJIT headers, NOT Lua 5.4 headers.
+    # This prevents lua_State struct mismatch crashes.
+    target_include_directories(pdluajit-lib PRIVATE
+        ${PDLUAJIT_PATH}
+        ${LUAJIT_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/pure-data/src)
+    target_include_directories(pdluajit-lib-multi PRIVATE
+        ${PDLUAJIT_PATH}
+        ${LUAJIT_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/pure-data/src)
+
+    target_compile_definitions(pdluajit-lib PRIVATE ${LIBPD_COMPILE_DEFINITIONS} PLUGDATA=1 ENABLE_LUAJIT=1)
+    target_compile_definitions(pdluajit-lib-multi PRIVATE ${LIBPD_COMPILE_DEFINITIONS} PDINSTANCE=1 PDTHREADS=1 PLUGDATA=1 ENABLE_LUAJIT=1)
+
+    set_target_properties(pdluajit-lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    set_target_properties(pdluajit-lib-multi PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    if(MSVC)
+        target_compile_options(pdluajit-lib PRIVATE /wd4996)
+        target_compile_options(pdluajit-lib-multi PRIVATE /wd4996)
+    endif()
+
+    # Ensure LuaJIT is built before pdluajit-lib
+    add_dependencies(pdluajit-lib luajit_build)
+    add_dependencies(pdluajit-lib-multi luajit_build)
+endif()
+
 # Hide deprecation warnings on externals, it's noise and are outside of our control
 if(MSVC)
   target_compile_options(externals PRIVATE /wd4996)
@@ -482,6 +551,12 @@ target_include_directories(externals-multi PRIVATE ${ELSE_INCLUDES})
 # ag: pdlua needs PLUGDATA symbol at compile time for plugdata integration.
 target_compile_definitions(externals PRIVATE ${LIBPD_COMPILE_DEFINITIONS} PLUGDATA=1)
 target_compile_definitions(externals-multi PRIVATE ${LIBPD_COMPILE_DEFINITIONS} PDINSTANCE=1 PDTHREADS=1 PLUGDATA=1)
+
+# pdluajit: compile definitions for externals (LuaJitObject in LuaObject.h)
+if(ENABLE_LUAJIT)
+    target_compile_definitions(externals PRIVATE ENABLE_LUAJIT=1)
+    target_compile_definitions(externals-multi PRIVATE ENABLE_LUAJIT=1)
+endif()
 
 add_library(pd-src STATIC ${SOURCE_FILES})
 target_compile_definitions(pd-src PRIVATE ${LIBPD_COMPILE_DEFINITIONS})
@@ -540,12 +615,23 @@ if("${CMAKE_SYSTEM}" MATCHES "Linux")
     find_library(MATH_LIB m)
     target_link_libraries(externals PUBLIC ${externals_libs} ${GEM_LIBS} lua)
     target_link_libraries(externals-multi PUBLIC ${externals_libs} ${GEM_LIBS_MULTI} lua-multi)
+    if(ENABLE_LUAJIT)
+        target_link_libraries(externals PUBLIC pdluajit-lib ${LUAJIT_LIBRARY})
+        target_link_libraries(externals-multi PUBLIC pdluajit-lib-multi ${LUAJIT_LIBRARY})
+    endif()
 elseif(MSVC)
-    add_library(pd SHARED $<TARGET_OBJECTS:externals> $<TARGET_OBJECTS:pd-src>)
-    add_library(pd-multi STATIC $<TARGET_OBJECTS:externals-multi> $<TARGET_OBJECTS:pd-src-multi>)
+    set(PDLUAJIT_OBJS "")
+    set(LUAJIT_LINK_LIBS "")
+    if(ENABLE_LUAJIT)
+        set(PDLUAJIT_OBJS $<TARGET_OBJECTS:pdluajit-lib>)
+        set(PDLUAJIT_OBJS_MULTI $<TARGET_OBJECTS:pdluajit-lib-multi>)
+        set(LUAJIT_LINK_LIBS ${LUAJIT_LIBRARY})
+    endif()
+    add_library(pd SHARED $<TARGET_OBJECTS:externals> $<TARGET_OBJECTS:pd-src> ${PDLUAJIT_OBJS})
+    add_library(pd-multi STATIC $<TARGET_OBJECTS:externals-multi> $<TARGET_OBJECTS:pd-src-multi> ${PDLUAJIT_OBJS_MULTI})
 
-    target_link_libraries(pd PUBLIC pthreadVC3 ws2_32 ${externals_libs} ${GEM_LIBS} lua)
-    target_link_libraries(pd-multi PUBLIC pthreadVC3 ws2_32 ${externals_libs} ${GEM_LIBS_MULTI} lua-multi)
+    target_link_libraries(pd PUBLIC pthreadVC3 ws2_32 ${externals_libs} ${GEM_LIBS} lua ${LUAJIT_LINK_LIBS})
+    target_link_libraries(pd-multi PUBLIC pthreadVC3 ws2_32 ${externals_libs} ${GEM_LIBS_MULTI} lua-multi ${LUAJIT_LINK_LIBS})
 
     add_custom_command(TARGET pd POST_BUILD
        COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -555,6 +641,10 @@ elseif(MSVC)
 elseif(APPLE)
     target_link_libraries(externals PUBLIC ${externals_libs} ${GEM_LIBS} lua)
     target_link_libraries(externals-multi PUBLIC ${externals_libs} ${GEM_LIBS_MULTI} lua-multi)
+    if(ENABLE_LUAJIT)
+        target_link_libraries(externals PUBLIC pdluajit-lib ${LUAJIT_LIBRARY})
+        target_link_libraries(externals-multi PUBLIC pdluajit-lib-multi ${LUAJIT_LIBRARY})
+    endif()
 endif()
 
 if(MSVC)

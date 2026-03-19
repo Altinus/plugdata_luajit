@@ -47,3 +47,6 @@
 [submodule "Libraries/xz"]
 	path = Libraries/xz
 	url = https://github.com/tukaani-project/xz.git
+[submodule "Libraries/pdluajit/luajit-src"]
+	path = Libraries/pdluajit/luajit-src
+	url = https://github.com/LuaJIT/LuaJIT.git
