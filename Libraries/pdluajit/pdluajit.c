@@ -467,7 +467,7 @@ static int pdluajit_lua_repaint(lua_State *L)
     t_pdluajit *x = (t_pdluajit *)lua_touserdata(L, -1);
     lua_pop(L, 1);
     if (x && x->has_gui)
-        plugdata_forward_message(x, gensym("lua_repaint"), 0, NULL);
+        plugdata_forward_message(0, x, gensym("lua_repaint"), 0, NULL);
     return 0;
 }
 
@@ -488,7 +488,7 @@ static int pdluajit_lua_set_size(lua_State *L)
     t_atom args[2];
     SETFLOAT(&args[0], (t_float)w);
     SETFLOAT(&args[1], (t_float)h);
-    plugdata_forward_message(x, gensym("lua_resized"), 2, args);
+    plugdata_forward_message(0, x, gensym("lua_resized"), 2, args);
     return 0;
 }
 
@@ -1110,7 +1110,7 @@ static void pdluajit_menu_open(t_pdluajit *x)
     if (x->script_path) {
         t_atom arg;
         SETSYMBOL(&arg, x->script_path);
-        plugdata_forward_message(x, gensym("open_textfile"), 1, &arg);
+        plugdata_forward_message(0, x, gensym("open_textfile"), 1, &arg);
     } else {
         pd_error(x, "pdluajit: no script loaded to open");
     }
